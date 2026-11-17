@@ -1,28 +1,36 @@
 import React from 'react';
-import { FastForward, Pause, Play, Plus, ScrollText, Users } from 'lucide-react';
+import { FastForward, KeyRound, Pause, Play, Plus, ScrollText, Users } from 'lucide-react';
 import { Agent } from '../types/agent';
+import { LLMConfig } from '../types/llm';
 import { Quest } from '../types/quest';
 
 interface TopHudProps {
   agents: Agent[];
   quests: Quest[];
+  llmConfig: LLMConfig;
   speed: number;
   onSetSpeed: (speed: number) => void;
   onOpenHireModal: () => void;
+  onOpenApiSettings: () => void;
   canHireMore: boolean;
 }
 
 export const TopHud: React.FC<TopHudProps> = ({
   agents,
   quests,
+  llmConfig,
   speed,
   onSetSpeed,
   onOpenHireModal,
+  onOpenApiSettings,
   canHireMore,
 }) => {
   const activeQuests = quests.filter((q) => q.status !== 'completed').length;
   const completedQuests = quests.filter((q) => q.status === 'completed').length;
   const workingAgents = agents.filter((a) => a.status !== 'idle').length;
+  const isRealAI =
+    llmConfig.provider !== 'simulation' &&
+    (llmConfig.provider === 'custom' || Boolean(llmConfig.apiKey.trim()));
 
   return (
     <header
@@ -37,7 +45,7 @@ export const TopHud: React.FC<TopHudProps> = ({
         flexShrink: 0,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div
           className="font-pixel"
           style={{
@@ -53,18 +61,26 @@ export const TopHud: React.FC<TopHudProps> = ({
           <span>PIXEL AGENT HQ</span>
         </div>
 
-        <span
+        <button
+          onClick={onOpenApiSettings}
+          title="Nhấn để cài đặt AI API Key"
           style={{
             fontSize: '11px',
-            padding: '3px 8px',
+            padding: '4px 10px',
             borderRadius: '999px',
-            background: '#1e293b',
-            border: '1px solid #334155',
-            color: '#38bdf8',
+            background: isRealAI ? '#14532d' : '#1e293b',
+            border: isRealAI ? '1px solid #22c55e' : '1px solid #334155',
+            color: isRealAI ? '#86efac' : '#38bdf8',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            fontWeight: 600,
           }}
         >
-          Simulation Mode
-        </span>
+          <KeyRound size={12} />
+          {isRealAI ? `AI: ${llmConfig.provider.toUpperCase()} (${llmConfig.model})` : 'Simulation Mode'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>

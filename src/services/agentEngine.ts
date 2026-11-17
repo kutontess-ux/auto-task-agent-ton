@@ -6,16 +6,20 @@ import {
   WORKER_DESKS,
 } from '../canvas/officeMap';
 import { Agent, AgentRole, HireAgentInput, LogEntry } from '../types/agent';
+import { DEFAULT_LLM_CONFIG, LLMConfig } from '../types/llm';
 import { Quest, Subtask } from '../types/quest';
+import { callLLM, parseJsonFromLLM } from './llmClient';
 
 export interface EngineSnapshot {
   agents: Agent[];
   quests: Quest[];
+  llmConfig: LLMConfig;
 }
 
 export interface IAgentEngine {
   getSnapshot(): EngineSnapshot;
   subscribe(listener: (snapshot: EngineSnapshot) => void): () => void;
+  setLLMConfig(config: LLMConfig): void;
   submitQuest(title: string, description: string): Quest;
   hireAgent(input: HireAgentInput): Agent | null;
   tick(dtSeconds: number): void;
@@ -41,7 +45,7 @@ function makeLog(level: LogEntry['level'], message: string): LogEntry {
   };
 }
 
-function cloneSnapshot(agents: Agent[], quests: Quest[]): EngineSnapshot {
+function cloneSnapshot(agents: Agent[], quests: Quest[], llmConfig: LLMConfig): EngineSnapshot {
   return {
     agents: agents.map((a) => ({
       ...a,
@@ -54,6 +58,7 @@ function cloneSnapshot(agents: Agent[], quests: Quest[]): EngineSnapshot {
       ...q,
       subtasks: q.subtasks.map((s) => ({ ...s })),
     })),
+    llmConfig: { ...llmConfig },
   };
 }
 
@@ -61,7 +66,12 @@ interface ActiveQuestRuntime {
   questId: string;
   phase: 'manager_to_board' | 'planning' | 'executing' | 'synthesizing';
   timer: number;
-  subtaskTimers: Record<string, { elapsed: number; duration: number; lastLogStep: number }>;
+  llmStarted: boolean;
+  llmDone: boolean;
+  subtaskTimers: Record<
+    string,
+    { elapsed: number; duration: number; lastLogStep: number; llmStarted?: boolean }
+  >;
 }
 
 const ROLE_WORK_PHRASES: Record<AgentRole, string[]> = {
@@ -76,11 +86,15 @@ const ROLE_WORK_PHRASES: Record<AgentRole, string[]> = {
 export class SimulationEngine implements IAgentEngine {
   private agents: Agent[] = [];
   private quests: Quest[] = [];
+  private llmConfig: LLMConfig = { ...DEFAULT_LLM_CONFIG };
   private listeners = new Set<(snapshot: EngineSnapshot) => void>();
   private activeRuntime: ActiveQuestRuntime | null = null;
   private idleWalkCooldown: Record<string, number> = {};
 
-  constructor() {
+  constructor(initialConfig?: LLMConfig) {
+    if (initialConfig) {
+      this.llmConfig = { ...initialConfig };
+    }
     this.initDefaultTeam();
   }
 
@@ -192,8 +206,27 @@ export class SimulationEngine implements IAgentEngine {
     this.agents = [manager, ...workers];
   }
 
+  private isRealAIMode(): boolean {
+    if (this.llmConfig.provider === 'simulation') return false;
+    if (this.llmConfig.provider === 'custom') return true;
+    return Boolean(this.llmConfig.apiKey.trim());
+  }
+
+  public setLLMConfig(config: LLMConfig): void {
+    this.llmConfig = { ...config };
+    const manager = this.agents.find((a) => a.role === 'manager');
+    if (manager) {
+      const modeLabel =
+        config.provider === 'simulation'
+          ? 'Simulation (Giả lập)'
+          : `Real AI (${config.provider.toUpperCase()} - ${config.model})`;
+      this.pushLog(manager, 'system', `Đã chuyển chế độ sang: ${modeLabel}`);
+    }
+    this.emit();
+  }
+
   public getSnapshot(): EngineSnapshot {
-    return cloneSnapshot(this.agents, this.quests);
+    return cloneSnapshot(this.agents, this.quests, this.llmConfig);
   }
 
   public subscribe(listener: (snapshot: EngineSnapshot) => void): () => void {
@@ -308,11 +341,13 @@ export class SimulationEngine implements IAgentEngine {
       questId: quest.id,
       phase: 'manager_to_board',
       timer: 0,
+      llmStarted: false,
+      llmDone: false,
       subtaskTimers: {},
     };
   }
 
-  private buildSubtasksForQuest(quest: Quest): Subtask[] {
+  private buildFallbackSubtasks(quest: Quest): Subtask[] {
     const workers = this.agents.filter((a) => a.role !== 'manager');
     return workers.map((worker) => {
       let taskTitle = '';
@@ -347,6 +382,155 @@ export class SimulationEngine implements IAgentEngine {
     });
   }
 
+  private async runManagerPlanLLM(quest: Quest, rt: ActiveQuestRuntime, manager: Agent): Promise<void> {
+    const workers = this.agents.filter((a) => a.role !== 'manager');
+    const rosterJson = JSON.stringify(
+      workers.map((w) => ({
+        id: w.id,
+        name: w.name,
+        role: w.roleLabel,
+        specialty: w.specialty,
+      }))
+    );
+
+    const systemPrompt =
+      'Bạn là Manager điều phối đội ngũ AI Agent. Hãy phân tích nhiệm vụ và chia thành các subtask cụ thể cho các thành viên phù hợp. Trả lời CHỈ BẰNG JSON array theo định dạng: [{"assignedAgentId":"...","title":"..."}] (bằng tiếng Việt, ngắn gọn rõ ràng).';
+    const userPrompt = `Nhiệm vụ: ${quest.title}\nMô tả: ${quest.description}\n\nDanh sách Agent hiện có:\n${rosterJson}`;
+
+    try {
+      this.pushLog(manager, 'info', `Đang gọi ${this.llmConfig.provider.toUpperCase()} để lập kế hoạch...`);
+      const raw = await callLLM(this.llmConfig, systemPrompt, userPrompt);
+      const parsed = parseJsonFromLLM<Array<{ assignedAgentId: string; title: string }>>(raw);
+
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const validSubtasks: Subtask[] = [];
+        for (const item of parsed) {
+          const worker = workers.find((w) => w.id === item.assignedAgentId) ?? workers[validSubtasks.length % workers.length];
+          if (worker && item.title) {
+            validSubtasks.push({
+              id: uid('sub'),
+              title: item.title,
+              assignedAgentId: worker.id,
+              assignedAgentName: worker.name,
+              assignedRoleLabel: worker.roleLabel,
+              status: 'assigned',
+              progress: 0,
+              output: null,
+            });
+          }
+        }
+        if (validSubtasks.length > 0) {
+          quest.subtasks = validSubtasks;
+          rt.llmDone = true;
+          this.emit();
+          return;
+        }
+      }
+      throw new Error('JSON phản hồi không hợp lệ.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.pushLog(manager, 'system', `⚠️ Lỗi AI Planning (${msg}). Dùng kế hoạch mặc định.`);
+      quest.subtasks = this.buildFallbackSubtasks(quest);
+      rt.llmDone = true;
+      this.emit();
+    }
+  }
+
+  private async runWorkerSubtaskLLM(
+    quest: Quest,
+    sub: Subtask,
+    worker: Agent,
+    manager: Agent
+  ): Promise<void> {
+    const systemPrompt = `Bạn là ${worker.name}, giữ vai trò ${worker.roleLabel}. Chuyên môn: ${worker.specialty}. Hãy thực hiện phần việc được giao một cách chuyên nghiệp, súc tích và hữu ích bằng tiếng Việt.`;
+    const userPrompt = `Quest tổng thể: "${quest.title}"\nMô tả Quest: ${quest.description}\n\nNhiệm vụ riêng của bạn: ${sub.title}`;
+
+    try {
+      this.pushLog(worker, 'info', `Đang gọi AI (${this.llmConfig.model}) xử lý subtask...`);
+      const result = await callLLM(this.llmConfig, systemPrompt, userPrompt);
+      sub.output = result.trim();
+      sub.progress = 100;
+      sub.status = 'completed';
+      this.pushLog(worker, 'success', `AI trả về kết quả (${sub.output.length} ký tự).`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      sub.output = `[Lỗi gọi API: ${msg}]`;
+      sub.progress = 100;
+      sub.status = 'completed';
+      this.pushLog(worker, 'system', `⚠️ Lỗi AI: ${msg}`);
+      this.setSpeech(worker, 'Lỗi API rồi!', 3);
+    }
+
+    worker.currentSubtaskId = null;
+    worker.status = 'reporting';
+    const meetPt = MEETING_POINTS[Math.floor(Math.random() * MEETING_POINTS.length)];
+    worker.targetPosition = { ...meetPt };
+    this.setSpeech(worker, 'Xong việc rồi sếp ơi!', 3);
+    this.awardXp(worker, 45);
+    this.pushLog(manager, 'info', `${worker.name} đã báo cáo hoàn thành subtask.`);
+    this.emit();
+  }
+
+  private async runManagerSynthesizeLLM(
+    quest: Quest,
+    rt: ActiveQuestRuntime,
+    manager: Agent
+  ): Promise<void> {
+    const reports = quest.subtasks
+      .map((s, i) => `### ${i + 1}. ${s.assignedAgentName} (${s.assignedRoleLabel}) — ${s.title}\n${s.output || ''}`)
+      .join('\n\n');
+
+    const systemPrompt =
+      'Bạn là Manager tổng hợp báo cáo từ các AI Agent chuyên môn. Hãy tổng hợp các phần việc thành một kết quả hoàn chỉnh, mạch lạc, rõ ràng bằng tiếng Việt.';
+    const userPrompt = `Quest: "${quest.title}"\nMô tả: ${quest.description}\n\nBáo cáo từ team:\n${reports}`;
+
+    try {
+      this.pushLog(manager, 'info', 'Đang gọi AI tổng hợp kết quả cuối cùng...');
+      const finalText = await callLLM(this.llmConfig, systemPrompt, userPrompt);
+      quest.finalOutput = finalText.trim();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.pushLog(manager, 'system', `⚠️ Lỗi tổng hợp AI (${msg}). Hiển thị báo cáo ghép.`);
+      quest.finalOutput = reports;
+    }
+
+    rt.llmDone = true;
+    this.emit();
+  }
+
+  private dispatchWorkers(quest: Quest, rt: ActiveQuestRuntime, manager: Agent): void {
+    quest.status = 'in_progress';
+    rt.phase = 'executing';
+    rt.timer = 0;
+
+    manager.targetPosition = { ...manager.deskPosition };
+    manager.status = 'walking';
+    this.setSpeech(manager, `Đã giao ${quest.subtasks.length} subtask cho team!`, 3.5);
+    this.pushLog(
+      manager,
+      'success',
+      `Đã phân công ${quest.subtasks.length} subtask cho các Agent chuyên môn.`
+    );
+
+    quest.subtasks.forEach((sub, idx) => {
+      const worker = this.agents.find((a) => a.id === sub.assignedAgentId);
+      if (worker) {
+        worker.currentSubtaskId = sub.id;
+        worker.targetPosition = { ...worker.deskPosition };
+        worker.status = 'walking';
+        sub.status = 'working';
+        this.setSpeech(worker, 'Nhận lệnh! Về bàn làm ngay.', 3);
+        this.pushLog(worker, 'action', `Nhận subtask từ Manager: "${sub.title}"`);
+        rt.subtaskTimers[sub.id] = {
+          elapsed: 0,
+          duration: 4.5 + idx * 1.1 + Math.random() * 1.5,
+          lastLogStep: 0,
+          llmStarted: false,
+        };
+      }
+    });
+  }
+
   public tick(dtSeconds: number): void {
     let changed = false;
 
@@ -364,7 +548,7 @@ export class SimulationEngine implements IAgentEngine {
         const dx = agent.targetPosition.x - agent.position.x;
         const dy = agent.targetPosition.y - agent.position.y;
         const dist = Math.hypot(dx, dy);
-        const speed = 78; // pixels per second
+        const speed = 78;
 
         if (dist <= speed * dtSeconds || dist < 1.5) {
           agent.position.x = agent.targetPosition.x;
@@ -389,8 +573,8 @@ export class SimulationEngine implements IAgentEngine {
           changed = true;
         }
       } else if (agent.status === 'idle' && !this.activeRuntime) {
-        // Occasional idle stroll in the office
-        this.idleWalkCooldown[agent.id] = (this.idleWalkCooldown[agent.id] ?? 4 + Math.random() * 6) - dtSeconds;
+        this.idleWalkCooldown[agent.id] =
+          (this.idleWalkCooldown[agent.id] ?? 4 + Math.random() * 6) - dtSeconds;
         if (this.idleWalkCooldown[agent.id] <= 0) {
           this.idleWalkCooldown[agent.id] = 6 + Math.random() * 8;
           const goLounge = Math.random() < 0.45;
@@ -412,6 +596,7 @@ export class SimulationEngine implements IAgentEngine {
       const rt = this.activeRuntime;
       const quest = this.quests.find((q) => q.id === rt.questId);
       const manager = this.agents.find((a) => a.role === 'manager');
+      const useRealAI = this.isRealAIMode();
 
       if (quest && manager) {
         rt.timer += dtSeconds;
@@ -420,45 +605,26 @@ export class SimulationEngine implements IAgentEngine {
           if (!manager.targetPosition) {
             rt.phase = 'planning';
             rt.timer = 0;
+            rt.llmStarted = false;
+            rt.llmDone = false;
             manager.status = 'thinking';
             this.setSpeech(manager, 'Đang chia nhỏ công việc...', 3);
             this.pushLog(manager, 'action', 'Phân tích phạm vi nhiệm vụ & năng lực từng Agent...');
             changed = true;
           }
         } else if (rt.phase === 'planning') {
-          if (rt.timer >= 2.2) {
-            quest.subtasks = this.buildSubtasksForQuest(quest);
-            quest.status = 'in_progress';
-            rt.phase = 'executing';
-            rt.timer = 0;
-
-            manager.targetPosition = { ...manager.deskPosition };
-            manager.status = 'walking';
-            this.setSpeech(manager, `Đã giao ${quest.subtasks.length} subtask cho team!`, 3.5);
-            this.pushLog(
-              manager,
-              'success',
-              `Đã phân công ${quest.subtasks.length} subtask cho các Agent chuyên môn.`
-            );
-
-            // Dispatch workers
-            quest.subtasks.forEach((sub, idx) => {
-              const worker = this.agents.find((a) => a.id === sub.assignedAgentId);
-              if (worker) {
-                worker.currentSubtaskId = sub.id;
-                worker.targetPosition = { ...worker.deskPosition };
-                worker.status = 'walking';
-                sub.status = 'working';
-                this.setSpeech(worker, 'Nhận lệnh! Về bàn làm ngay.', 3);
-                this.pushLog(worker, 'action', `Nhận subtask từ Manager: "${sub.title}"`);
-                rt.subtaskTimers[sub.id] = {
-                  elapsed: 0,
-                  duration: 4.5 + idx * 1.1 + Math.random() * 1.5,
-                  lastLogStep: 0,
-                };
-              }
-            });
-
+          if (useRealAI) {
+            if (!rt.llmStarted) {
+              rt.llmStarted = true;
+              void this.runManagerPlanLLM(quest, rt, manager);
+            }
+            if (rt.llmDone) {
+              this.dispatchWorkers(quest, rt, manager);
+              changed = true;
+            }
+          } else if (rt.timer >= 2.2) {
+            quest.subtasks = this.buildFallbackSubtasks(quest);
+            this.dispatchWorkers(quest, rt, manager);
             changed = true;
           }
         } else if (rt.phase === 'executing') {
@@ -472,39 +638,52 @@ export class SimulationEngine implements IAgentEngine {
             const timerInfo = rt.subtaskTimers[sub.id];
             if (!worker || !timerInfo) continue;
 
-            // Only advance work progress once worker arrives at desk
             if (!worker.targetPosition) {
               worker.status = 'working';
               timerInfo.elapsed += dtSeconds;
-              const pct = Math.min(100, Math.round((timerInfo.elapsed / timerInfo.duration) * 100));
-              if (pct !== sub.progress) {
-                sub.progress = pct;
-                changed = true;
-              }
 
-              const phrases = ROLE_WORK_PHRASES[worker.role] || ROLE_WORK_PHRASES.custom;
-              const step = Math.floor((pct / 100) * 3);
-              if (step > timerInfo.lastLogStep && step <= 2) {
-                timerInfo.lastLogStep = step;
-                const phrase = phrases[step % phrases.length];
-                this.setSpeech(worker, phrase, 2.5);
-                this.pushLog(worker, 'info', `[${pct}%] ${phrase}`);
-                changed = true;
-              }
+              if (useRealAI) {
+                if (!timerInfo.llmStarted) {
+                  timerInfo.llmStarted = true;
+                  this.setSpeech(worker, 'Đang gọi AI xử lý...', 4);
+                  void this.runWorkerSubtaskLLM(quest, sub, worker, manager);
+                }
+                const creepingPct = Math.min(92, Math.round((timerInfo.elapsed / 8) * 92));
+                if (creepingPct > sub.progress) {
+                  sub.progress = creepingPct;
+                  changed = true;
+                }
+              } else {
+                const pct = Math.min(100, Math.round((timerInfo.elapsed / timerInfo.duration) * 100));
+                if (pct !== sub.progress) {
+                  sub.progress = pct;
+                  changed = true;
+                }
 
-              if (timerInfo.elapsed >= timerInfo.duration) {
-                sub.status = 'completed';
-                sub.progress = 100;
-                sub.output = `Hoàn thành "${sub.title}" bởi ${worker.name} (${worker.roleLabel}).`;
-                worker.currentSubtaskId = null;
-                worker.status = 'reporting';
-                const meetPt = MEETING_POINTS[Math.floor(Math.random() * MEETING_POINTS.length)];
-                worker.targetPosition = { ...meetPt };
-                this.setSpeech(worker, 'Xong việc rồi sếp ơi!', 3);
-                this.pushLog(worker, 'success', `Hoàn thành subtask (+45 XP). Đang báo cáo Manager.`);
-                this.awardXp(worker, 45);
-                this.pushLog(manager, 'info', `${worker.name} đã báo cáo hoàn thành subtask.`);
-                changed = true;
+                const phrases = ROLE_WORK_PHRASES[worker.role] || ROLE_WORK_PHRASES.custom;
+                const step = Math.floor((pct / 100) * 3);
+                if (step > timerInfo.lastLogStep && step <= 2) {
+                  timerInfo.lastLogStep = step;
+                  const phrase = phrases[step % phrases.length];
+                  this.setSpeech(worker, phrase, 2.5);
+                  this.pushLog(worker, 'info', `[${pct}%] ${phrase}`);
+                  changed = true;
+                }
+
+                if (timerInfo.elapsed >= timerInfo.duration) {
+                  sub.status = 'completed';
+                  sub.progress = 100;
+                  sub.output = `Hoàn thành "${sub.title}" bởi ${worker.name} (${worker.roleLabel}).`;
+                  worker.currentSubtaskId = null;
+                  worker.status = 'reporting';
+                  const meetPt = MEETING_POINTS[Math.floor(Math.random() * MEETING_POINTS.length)];
+                  worker.targetPosition = { ...meetPt };
+                  this.setSpeech(worker, 'Xong việc rồi sếp ơi!', 3);
+                  this.pushLog(worker, 'success', `Hoàn thành subtask (+45 XP). Đang báo cáo Manager.`);
+                  this.awardXp(worker, 45);
+                  this.pushLog(manager, 'info', `${worker.name} đã báo cáo hoàn thành subtask.`);
+                  changed = true;
+                }
               }
             }
           }
@@ -513,15 +692,22 @@ export class SimulationEngine implements IAgentEngine {
             quest.status = 'reviewing';
             rt.phase = 'synthesizing';
             rt.timer = 0;
+            rt.llmStarted = false;
+            rt.llmDone = false;
             manager.status = 'thinking';
             this.setSpeech(manager, 'Team làm tốt lắm! Đang tổng hợp...', 3);
             this.pushLog(manager, 'action', 'Tất cả subtask đã xong. Đang tổng hợp kết quả cuối...');
             changed = true;
           }
         } else if (rt.phase === 'synthesizing') {
-          if (rt.timer >= 2.2) {
-            quest.status = 'completed';
-            quest.completedAt = nowTime();
+          let readyToComplete = false;
+          if (useRealAI) {
+            if (!rt.llmStarted) {
+              rt.llmStarted = true;
+              void this.runManagerSynthesizeLLM(quest, rt, manager);
+            }
+            readyToComplete = rt.llmDone;
+          } else if (rt.timer >= 2.2) {
             quest.finalOutput = [
               `✅ KẾT QUẢ TỔNG HỢP QUEST: "${quest.title}"`,
               `Quản lý điều phối: ${manager.name} (Lv.${manager.level})`,
@@ -532,13 +718,17 @@ export class SimulationEngine implements IAgentEngine {
               `----------------------------------------`,
               `Tất cả đầu mục đã được kiểm duyệt và sẵn sàng bàn giao!`,
             ].join('\n');
+            readyToComplete = true;
+          }
 
+          if (readyToComplete) {
+            quest.status = 'completed';
+            quest.completedAt = nowTime();
             manager.status = 'done';
             this.setSpeech(manager, 'Quest hoàn thành 100%! 🏆', 4);
             this.pushLog(manager, 'success', `Đã bàn giao Quest "${quest.title}" (+60 XP).`);
             this.awardXp(manager, 60);
 
-            // Send workers back to idle at desks
             for (const agent of this.agents) {
               if (agent.role !== 'manager') {
                 agent.status = 'walking';
@@ -549,7 +739,6 @@ export class SimulationEngine implements IAgentEngine {
             this.activeRuntime = null;
             changed = true;
 
-            // Start next queued quest if any
             const nextPending = this.quests.find((q) => q.status === 'pending');
             if (nextPending) {
               this.startQuest(nextPending);

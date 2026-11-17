@@ -227,22 +227,44 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
 
                 {/* Final Output */}
                 {quest.finalOutput && (
-                  <pre
-                    className="font-mono"
-                    style={{
-                      marginTop: '10px',
-                      padding: '8px',
-                      background: '#0d1117',
-                      border: '1px solid #14532d',
-                      borderRadius: '6px',
-                      fontSize: '11px',
-                      color: '#86efac',
-                      whiteSpace: 'pre-wrap',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {quest.finalOutput}
-                  </pre>
+                  <div style={{ marginTop: '10px', position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(quest.finalOutput || '')}
+                      style={{
+                        position: 'absolute',
+                        top: '6px',
+                        right: '6px',
+                        fontSize: '10px',
+                        padding: '3px 7px',
+                        background: '#1e293b',
+                        border: '1px solid #334155',
+                        borderRadius: '4px',
+                        color: '#cbd5e1',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Copy
+                    </button>
+                    <pre
+                      className="font-mono"
+                      style={{
+                        padding: '8px',
+                        paddingTop: '26px',
+                        background: '#0d1117',
+                        border: '1px solid #14532d',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        color: '#86efac',
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.45,
+                        maxHeight: '220px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      {quest.finalOutput}
+                    </pre>
+                  </div>
                 )}
               </div>
             );
