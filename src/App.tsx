@@ -53,6 +53,10 @@ export const App: React.FC = () => {
     engine.submitQuest(title, description);
   };
 
+  const handleReviseQuest = (questId: string, feedback: string) => {
+    engine.reviseQuest(questId, feedback);
+  };
+
   const handleHireAgent = (input: HireAgentInput) => {
     const hired = engine.hireAgent(input);
     if (hired) {
@@ -89,7 +93,11 @@ export const App: React.FC = () => {
       />
 
       <main className="app-main" style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        <QuestPanel quests={snapshot.quests} onSubmitQuest={handleSubmitQuest} />
+        <QuestPanel
+          quests={snapshot.quests}
+          onSubmitQuest={handleSubmitQuest}
+          onReviseQuest={handleReviseQuest}
+        />
 
         <div className="panel-canvas" style={{ flex: 1, minWidth: 0, height: '100%' }}>
           <OfficeCanvas

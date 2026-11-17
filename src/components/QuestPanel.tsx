@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Clock, Copy, Download, FileText, Send, Sparkles, X } from 'lucide-react';
+import { CheckCircle2, Clock, Copy, Download, FileText, RotateCcw, Send, Sparkles, X } from 'lucide-react';
 import { Quest } from '../types/quest';
 
 interface QuestPanelProps {
   quests: Quest[];
   onSubmitQuest: (title: string, description: string) => void;
+  onReviseQuest: (questId: string, feedback: string) => void;
 }
 
 const SAMPLE_QUESTS = [
@@ -47,14 +48,23 @@ function buildFullMarkdown(quest: Quest): string {
   return parts.join('\n\n');
 }
 
-export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest }) => {
+export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, onReviseQuest }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [expandedQuestId, setExpandedQuestId] = useState<string | null>(null);
   const [viewingQuestId, setViewingQuestId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [feedbackText, setFeedbackText] = useState('');
 
   const viewingQuest = quests.find((q) => q.id === viewingQuestId) ?? null;
+
+  const handleReviseSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!viewingQuest || !feedbackText.trim()) return;
+    onReviseQuest(viewingQuest.id, feedbackText);
+    setFeedbackText('');
+    setViewingQuestId(null);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,7 +245,14 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
                       cursor: 'pointer',
                     }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#f1f5f9' }}>{quest.title}</div>
+                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#f1f5f9' }}>
+                      {quest.title}{' '}
+                      {quest.revision > 1 && (
+                        <span style={{ fontSize: '10px', color: '#fbbf24', marginLeft: '4px' }}>
+                          (v{quest.revision})
+                        </span>
+                      )}
+                    </div>
                     <span
                       style={{
                         fontSize: '10px',
@@ -272,7 +289,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
                   </div>
 
                   {/* Action bar when completed */}
-                  {quest.finalOutput && (
+                  {quest.finalOutput && quest.status === 'completed' && (
                     <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
                       <button
                         type="button"
@@ -281,7 +298,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
                         style={{ flex: 1, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' }}
                       >
                         <FileText size={12} />
-                        Xem kết quả đầy đủ
+                        Xem / Góp ý sửa
                       </button>
                       <button
                         type="button"
@@ -451,7 +468,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>
-                  👑 Báo cáo tổng hợp từ Manager
+                  👑 Báo cáo tổng hợp từ Manager (v{viewingQuest.revision})
                 </div>
                 <pre
                   className="font-mono"
@@ -504,6 +521,44 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
                 </div>
               </div>
             </div>
+
+            {/* Feedback / Revision Bar */}
+            <form
+              onSubmit={handleReviseSubmit}
+              style={{
+                padding: '12px 18px',
+                borderTop: '1px solid #303a4d',
+                background: '#0d1117',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#fbbf24' }}>
+                💬 Chưa hài lòng? Nhập góp ý để Manager Alex & team làm lại (v{viewingQuest.revision + 1}):
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="VD: Viết ngắn gọn hơn, thêm ví dụ code cụ thể, đổi giọng văn..."
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    background: '#161b22',
+                    border: '1px solid #303a4d',
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '12px',
+                  }}
+                />
+                <button type="submit" className="pixel-btn pixel-btn-gold" disabled={!feedbackText.trim()}>
+                  <RotateCcw size={13} />
+                  Yêu cầu làm lại
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

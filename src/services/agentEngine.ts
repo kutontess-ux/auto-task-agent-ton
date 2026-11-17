@@ -21,6 +21,7 @@ export interface IAgentEngine {
   subscribe(listener: (snapshot: EngineSnapshot) => void): () => void;
   setLLMConfig(config: LLMConfig): void;
   submitQuest(title: string, description: string): Quest;
+  reviseQuest(questId: string, feedback: string): boolean;
   hireAgent(input: HireAgentInput): Agent | null;
   tick(dtSeconds: number): void;
 }
@@ -305,6 +306,8 @@ export class SimulationEngine implements IAgentEngine {
       title: title.trim(),
       description: description.trim(),
       status: 'pending',
+      revision: 1,
+      feedbackHistory: [],
       createdAt: nowTime(),
       completedAt: null,
       subtasks: [],
@@ -326,14 +329,52 @@ export class SimulationEngine implements IAgentEngine {
     return quest;
   }
 
+  public reviseQuest(questId: string, feedback: string): boolean {
+    const clean = feedback.trim();
+    if (!clean) return false;
+    const quest = this.quests.find((q) => q.id === questId);
+    if (!quest || quest.status !== 'completed') return false;
+
+    quest.revision += 1;
+    quest.feedbackHistory = [...quest.feedbackHistory, clean];
+    quest.status = 'pending';
+    quest.completedAt = null;
+
+    const manager = this.agents.find((a) => a.role === 'manager');
+    if (!this.activeRuntime) {
+      this.startQuest(quest);
+    } else if (manager) {
+      this.pushLog(
+        manager,
+        'info',
+        `Đã xếp hàng chỉnh sửa v${quest.revision} cho "${quest.title}": "${clean}"`
+      );
+    }
+
+    this.emit();
+    return true;
+  }
+
   private startQuest(quest: Quest): void {
     quest.status = 'planning';
+    const isRevision = quest.revision > 1;
+    const latestFeedback = quest.feedbackHistory[quest.feedbackHistory.length - 1];
     const manager = this.agents.find((a) => a.role === 'manager');
     if (manager) {
       manager.status = 'walking';
       manager.targetPosition = { x: QUEST_BOARD_POS.x, y: QUEST_BOARD_POS.y + 18 };
-      this.setSpeech(manager, 'Có Quest mới! Để xem nào...', 3.5);
-      this.pushLog(manager, 'action', `Nhận Quest mới: "${quest.title}"`);
+      this.setSpeech(
+        manager,
+        isRevision ? `Sếp góp ý (v${quest.revision})! Sửa lại nào...` : 'Có Quest mới! Để xem nào...',
+        3.5
+      );
+      this.pushLog(
+        manager,
+        'action',
+        isRevision
+          ? `Nhận yêu cầu chỉnh sửa v${quest.revision} cho "${quest.title}": "${latestFeedback}"`
+          : `Nhận Quest mới: "${quest.title}"`
+      );
       this.pushLog(manager, 'info', 'Đang di chuyển tới Quest Board để phân tích...');
     }
 
@@ -349,23 +390,24 @@ export class SimulationEngine implements IAgentEngine {
 
   private buildFallbackSubtasks(quest: Quest): Subtask[] {
     const workers = this.agents.filter((a) => a.role !== 'manager');
+    const revPrefix = quest.revision > 1 ? `[Sửa v${quest.revision}] ` : '';
     return workers.map((worker) => {
       let taskTitle = '';
       switch (worker.role) {
         case 'researcher':
-          taskTitle = `Nghiên cứu & thu thập dữ liệu cho "${quest.title}"`;
+          taskTitle = `${revPrefix}Nghiên cứu & bổ sung dữ liệu cho "${quest.title}"`;
           break;
         case 'coder':
-          taskTitle = `Xây dựng giải pháp kỹ thuật / prototype cho "${quest.title}"`;
+          taskTitle = `${revPrefix}Cập nhật giải pháp kỹ thuật / prototype cho "${quest.title}"`;
           break;
         case 'writer':
-          taskTitle = `Soạn thảo tài liệu & nội dung trình bày`;
+          taskTitle = `${revPrefix}Biên tập lại tài liệu & nội dung trình bày`;
           break;
         case 'reviewer':
-          taskTitle = `Kiểm thử, đánh giá chất lượng & rà soát lỗi`;
+          taskTitle = `${revPrefix}Kiểm thử & rà soát lại chất lượng`;
           break;
         default:
-          taskTitle = `${worker.roleLabel}: Xử lý phần "${worker.specialty}"`;
+          taskTitle = `${revPrefix}${worker.roleLabel}: Xử lý phần "${worker.specialty}"`;
           break;
       }
 
@@ -393,9 +435,16 @@ export class SimulationEngine implements IAgentEngine {
       }))
     );
 
+    const feedbackNote =
+      quest.feedbackHistory.length > 0
+        ? `\n\nĐÂY LÀ BẢN CHỈNH SỬA (v${quest.revision}).\nGóp ý từ người dùng cần khắc phục: "${
+            quest.feedbackHistory[quest.feedbackHistory.length - 1]
+          }"\nKết quả trước đó (tóm tắt): ${(quest.finalOutput || '').slice(0, 600)}`
+        : '';
+
     const systemPrompt =
-      'Bạn là Manager điều phối đội ngũ AI Agent. Hãy phân tích nhiệm vụ và chia thành các subtask cụ thể cho các thành viên phù hợp. Trả lời CHỈ BẰNG JSON array theo định dạng: [{"assignedAgentId":"...","title":"..."}] (bằng tiếng Việt, ngắn gọn rõ ràng).';
-    const userPrompt = `Nhiệm vụ: ${quest.title}\nMô tả: ${quest.description}\n\nDanh sách Agent hiện có:\n${rosterJson}`;
+      'Bạn là Manager điều phối đội ngũ AI Agent. Hãy phân tích nhiệm vụ (và góp ý chỉnh sửa nếu có) để chia thành các subtask cụ thể cho các thành viên phù hợp. Trả lời CHỈ BẰNG JSON array theo định dạng: [{"assignedAgentId":"...","title":"..."}] (bằng tiếng Việt, ngắn gọn rõ ràng).';
+    const userPrompt = `Nhiệm vụ: ${quest.title}\nMô tả: ${quest.description}${feedbackNote}\n\nDanh sách Agent hiện có:\n${rosterJson}`;
 
     try {
       this.pushLog(manager, 'info', `Đang gọi ${this.llmConfig.provider.toUpperCase()} để lập kế hoạch...`);
@@ -442,8 +491,15 @@ export class SimulationEngine implements IAgentEngine {
     worker: Agent,
     manager: Agent
   ): Promise<void> {
+    const feedbackCtx =
+      quest.feedbackHistory.length > 0
+        ? `\n\nYêu cầu chỉnh sửa của sếp (v${quest.revision}): "${
+            quest.feedbackHistory[quest.feedbackHistory.length - 1]
+          }". Hãy cải thiện triệt để theo góp ý này.`
+        : '';
+
     const systemPrompt = `Bạn là ${worker.name}, giữ vai trò ${worker.roleLabel}. Chuyên môn: ${worker.specialty}. Hãy thực hiện phần việc được giao một cách chuyên nghiệp, súc tích và hữu ích bằng tiếng Việt.`;
-    const userPrompt = `Quest tổng thể: "${quest.title}"\nMô tả Quest: ${quest.description}\n\nNhiệm vụ riêng của bạn: ${sub.title}`;
+    const userPrompt = `Quest tổng thể: "${quest.title}"\nMô tả Quest: ${quest.description}${feedbackCtx}\n\nNhiệm vụ riêng của bạn: ${sub.title}`;
 
     try {
       this.pushLog(worker, 'info', `Đang gọi AI (${this.llmConfig.model}) xử lý subtask...`);
@@ -480,9 +536,16 @@ export class SimulationEngine implements IAgentEngine {
       .map((s, i) => `### ${i + 1}. ${s.assignedAgentName} (${s.assignedRoleLabel}) — ${s.title}\n${s.output || ''}`)
       .join('\n\n');
 
+    const feedbackNote =
+      quest.feedbackHistory.length > 0
+        ? `\nLưu ý chỉnh sửa từ người dùng (v${quest.revision}): "${
+            quest.feedbackHistory[quest.feedbackHistory.length - 1]
+          }"`
+        : '';
+
     const systemPrompt =
       'Bạn là Manager tổng hợp báo cáo từ các AI Agent chuyên môn. Hãy tổng hợp các phần việc thành một kết quả hoàn chỉnh, mạch lạc, rõ ràng bằng tiếng Việt.';
-    const userPrompt = `Quest: "${quest.title}"\nMô tả: ${quest.description}\n\nBáo cáo từ team:\n${reports}`;
+    const userPrompt = `Quest: "${quest.title}"\nMô tả: ${quest.description}${feedbackNote}\n\nBáo cáo từ team:\n${reports}`;
 
     try {
       this.pushLog(manager, 'info', 'Đang gọi AI tổng hợp kết quả cuối cùng...');
@@ -708,9 +771,15 @@ export class SimulationEngine implements IAgentEngine {
             }
             readyToComplete = rt.llmDone;
           } else if (rt.timer >= 2.2) {
+            const revLine =
+              quest.revision > 1
+                ? `Phiên bản chỉnh sửa: v${quest.revision} (Theo góp ý: "${
+                    quest.feedbackHistory[quest.feedbackHistory.length - 1]
+                  }")`
+                : 'Phiên bản: v1';
             quest.finalOutput = [
               `✅ KẾT QUẢ TỔNG HỢP QUEST: "${quest.title}"`,
-              `Quản lý điều phối: ${manager.name} (Lv.${manager.level})`,
+              `Quản lý điều phối: ${manager.name} (Lv.${manager.level}) · ${revLine}`,
               `----------------------------------------`,
               ...quest.subtasks.map(
                 (s, i) => `${i + 1}. [${s.assignedRoleLabel} - ${s.assignedAgentName}]: ${s.output}`

@@ -44,4 +44,26 @@ describe('SimulationEngine', () => {
     expect(hired).not.toBeNull();
     expect(engine.getSnapshot().agents).toHaveLength(6);
   });
+
+  it('supports revising a completed quest with user feedback', () => {
+    const engine = new SimulationEngine();
+    const quest = engine.submitQuest('Write API Docs', 'Initial API documentation');
+
+    for (let i = 0; i < 125; i++) {
+      engine.tick(0.2);
+    }
+
+    const ok = engine.reviseQuest(quest.id, 'Thêm ví dụ curl cụ thể hơn');
+    expect(ok).toBe(true);
+
+    for (let i = 0; i < 125; i++) {
+      engine.tick(0.2);
+    }
+
+    const revised = engine.getSnapshot().quests.find((q) => q.id === quest.id)!;
+    expect(revised.status).toBe('completed');
+    expect(revised.revision).toBe(2);
+    expect(revised.feedbackHistory).toEqual(['Thêm ví dụ curl cụ thể hơn']);
+    expect(revised.finalOutput).toContain('Thêm ví dụ curl cụ thể hơn');
+  });
 });

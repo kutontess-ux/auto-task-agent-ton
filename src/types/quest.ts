@@ -18,6 +18,8 @@ export interface Quest {
   title: string;
   description: string;
   status: QuestStatus;
+  revision: number;
+  feedbackHistory: string[];
   createdAt: string;
   completedAt: string | null;
   subtasks: Subtask[];
