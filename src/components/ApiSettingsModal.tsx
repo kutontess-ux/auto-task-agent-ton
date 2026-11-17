@@ -76,7 +76,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({
         zIndex: 60,
       }}
     >
-      <div className="pixel-panel" style={{ width: '460px', padding: '18px' }}>
+      <div className="pixel-panel" style={{ width: 'min(460px, 94vw)', maxHeight: '90vh', overflowY: 'auto', padding: '18px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div className="font-pixel" style={{ fontSize: '12px', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <KeyRound size={15} />

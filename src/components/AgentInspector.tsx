@@ -36,8 +36,9 @@ export const AgentInspector: React.FC<AgentInspectorProps> = ({
 
   return (
     <aside
+      className="panel-right"
       style={{
-        width: '340px',
+        width: '300px',
         background: '#161b22',
         borderLeft: '2px solid #303a4d',
         display: 'flex',

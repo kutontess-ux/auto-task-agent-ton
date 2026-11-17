@@ -73,7 +73,10 @@ export const App: React.FC = () => {
   const canHireMore = workersCount < WORKER_DESKS.length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
+    <div
+      className="app-shell"
+      style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', overflow: 'hidden' }}
+    >
       <TopHud
         agents={snapshot.agents}
         quests={snapshot.quests}
@@ -85,10 +88,10 @@ export const App: React.FC = () => {
         canHireMore={canHireMore}
       />
 
-      <main style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+      <main className="app-main" style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         <QuestPanel quests={snapshot.quests} onSubmitQuest={handleSubmitQuest} />
 
-        <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
+        <div className="panel-canvas" style={{ flex: 1, minWidth: 0, height: '100%' }}>
           <OfficeCanvas
             agents={snapshot.agents}
             selectedAgentId={selectedAgentId}

@@ -45,8 +45,9 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest })
 
   return (
     <aside
+      className="panel-left"
       style={{
-        width: '320px',
+        width: '290px',
         background: '#161b22',
         borderRight: '2px solid #303a4d',
         display: 'flex',

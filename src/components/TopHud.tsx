@@ -35,26 +35,28 @@ export const TopHud: React.FC<TopHudProps> = ({
   return (
     <header
       style={{
-        height: '58px',
+        minHeight: '54px',
         background: '#111827',
         borderBottom: '2px solid #303a4d',
         display: 'flex',
+        flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 18px',
+        gap: '8px',
+        padding: '8px 14px',
         flexShrink: 0,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
         <div
           className="font-pixel"
           style={{
-            fontSize: '13px',
+            fontSize: '12px',
             color: '#fbbf24',
             textShadow: '0 2px 0 #78350f',
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
+            gap: '6px',
           }}
         >
           <span>🏰</span>
@@ -62,6 +64,7 @@ export const TopHud: React.FC<TopHudProps> = ({
         </div>
 
         <button
+          type="button"
           onClick={onOpenApiSettings}
           title="Nhấn để cài đặt AI API Key"
           style={{
@@ -83,16 +86,16 @@ export const TopHud: React.FC<TopHudProps> = ({
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
         {/* Stats */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#cbd5e1' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', color: '#cbd5e1' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <Users size={14} color="#38bdf8" />
-            <strong>{workingAgents}</strong>/{agents.length} đang làm
+            <strong>{workingAgents}</strong>/{agents.length} làm
           </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <ScrollText size={14} color="#f59e0b" />
-            <strong>{activeQuests}</strong> đang chạy · <strong>{completedQuests}</strong> xong
+            <strong>{activeQuests}</strong> chạy · <strong>{completedQuests}</strong> xong
           </span>
         </div>
 
@@ -108,6 +111,7 @@ export const TopHud: React.FC<TopHudProps> = ({
           }}
         >
           <button
+            type="button"
             onClick={() => onSetSpeed(0)}
             title="Tạm dừng"
             style={{
@@ -123,6 +127,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             <Pause size={13} />
           </button>
           <button
+            type="button"
             onClick={() => onSetSpeed(1)}
             title="Tốc độ 1x"
             style={{
@@ -141,6 +146,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             <Play size={12} /> 1x
           </button>
           <button
+            type="button"
             onClick={() => onSetSpeed(2)}
             title="Tốc độ 2x"
             style={{
@@ -162,6 +168,7 @@ export const TopHud: React.FC<TopHudProps> = ({
 
         {/* Hire Agent */}
         <button
+          type="button"
           className="pixel-btn pixel-btn-gold"
           onClick={onOpenHireModal}
           disabled={!canHireMore}

@@ -34,7 +34,7 @@ export const HireAgentModal: React.FC<HireAgentModalProps> = ({ onClose, onHire 
         zIndex: 50,
       }}
     >
-      <div className="pixel-panel" style={{ width: '400px', padding: '18px' }}>
+      <div className="pixel-panel" style={{ width: 'min(400px, 94vw)', maxHeight: '90vh', overflowY: 'auto', padding: '18px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div className="font-pixel" style={{ fontSize: '12px', color: '#fbbf24' }}>
             TUYỂN AGENT MỚI
