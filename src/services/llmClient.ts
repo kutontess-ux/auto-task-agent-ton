@@ -14,7 +14,8 @@ export async function callLLM(
   }
 
   if (config.provider === 'gemini') {
-    const model = config.model.trim() || 'gemini-2.5-flash';
+    const rawModel = config.model.trim() || 'gemini-3.5-flash-lite';
+    const model = rawModel.replace(/^models\//, '');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
       model
     )}:generateContent?key=${encodeURIComponent(config.apiKey.trim())}`;
@@ -117,4 +118,23 @@ export function parseJsonFromLLM<T>(raw: string): T {
     return JSON.parse(cleaned.slice(start)) as T;
   }
   return JSON.parse(cleaned) as T;
+}
+
+export async function fetchGeminiModels(apiKey: string): Promise<string[]> {
+  if (!apiKey.trim()) {
+    throw new Error('Vui lòng nhập Gemini API Key trước.');
+  }
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`
+  );
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Không lấy được danh sách model (${res.status}): ${txt.slice(0, 150)}`);
+  }
+  const data = (await res.json()) as {
+    models?: Array<{ name: string; supportedGenerationMethods?: string[] }>;
+  };
+  return (data.models || [])
+    .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+    .map((m) => m.name.replace(/^models\//, ''));
 }

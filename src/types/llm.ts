@@ -9,9 +9,9 @@ export interface LLMConfig {
 
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
   simulation: 'mock-sim-v1',
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.5-flash-lite',
   openai: 'gpt-4o-mini',
-  openrouter: 'google/gemini-2.5-flash',
+  openrouter: 'google/gemini-3.5-flash-lite',
   custom: 'llama3.2',
 };
 
