@@ -2,19 +2,27 @@ import React, { useState } from 'react';
 import {
   CheckCircle2,
   Clock,
+  Code2,
   Copy,
   Download,
   Eye,
   FileText,
   Globe,
   KeyRound,
+  Monitor,
   RotateCcw,
   Send,
+  Smartphone,
   Sparkles,
   X,
 } from 'lucide-react';
 import { Quest } from '../types/quest';
-import { extractHtmlFromQuest } from '../utils/htmlDeliverable';
+import {
+  copyTextReliable,
+  extractHtmlFromQuest,
+  stripHtmlCodeBlocks,
+  triggerFileDownload,
+} from '../utils/htmlDeliverable';
 
 interface QuestPanelProps {
   quests: Quest[];
@@ -75,16 +83,21 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
   const [description, setDescription] = useState('');
   const [expandedQuestId, setExpandedQuestId] = useState<string | null>(null);
   const [viewingQuestId, setViewingQuestId] = useState<string | null>(null);
-  const [modalTab, setModalTab] = useState<'preview' | 'report'>('preview');
+  const [modalTab, setModalTab] = useState<'preview' | 'code' | 'report'>('preview');
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
 
   const viewingQuest = quests.find((q) => q.id === viewingQuestId) ?? null;
   const viewingHtml = viewingQuest ? extractHtmlFromQuest(viewingQuest) : null;
 
-  const openResultModal = (quest: Quest) => {
+  const openResultModal = (quest: Quest, tab?: 'preview' | 'code' | 'report') => {
     setViewingQuestId(quest.id);
-    setModalTab(extractHtmlFromQuest(quest) ? 'preview' : 'report');
+    setExportNotice(null);
+    setPreviewDevice('desktop');
+    const hasHtml = Boolean(extractHtmlFromQuest(quest));
+    setModalTab(tab ?? (hasHtml ? 'preview' : 'report'));
   };
 
   const handleReviseSubmit = (e: React.FormEvent) => {
@@ -103,31 +116,41 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
     setDescription('');
   };
 
-  const handleCopy = (id: string, text: string) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500);
+  const handleCopy = async (id: string, text: string) => {
+    const ok = await copyTextReliable(text);
+    setCopiedId(ok ? id : 'failed');
+    setExportNotice(
+      ok
+        ? '✅ Đã copy vào bộ nhớ tạm (Clipboard).'
+        : '⚠️ Trình duyệt chặn copy tự động — hãy bấm Ctrl+A rồi Ctrl+C trong khung mã nguồn.'
+    );
+    setTimeout(() => setCopiedId((prev) => (prev === id || prev === 'failed' ? null : prev)), 1800);
   };
 
   const handleDownloadMd = (quest: Quest) => {
     const md = buildFullMarkdown(quest);
-    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'quest-result'}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'quest-result'}.md`;
+    const ok = triggerFileDownload(filename, md, 'text/markdown;charset=utf-8');
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    setExportNotice(
+      ok && !inIframe
+        ? `✅ Đang tải file ${filename}`
+        : '💡 Nếu khung preview chặn tải file tự động, hãy bấm "Copy" hoặc mở tab Mã nguồn / Báo cáo.'
+    );
   };
 
   const handleDownloadHtml = (quest: Quest, htmlCode: string) => {
-    const blob = new Blob([htmlCode], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'landing-page'}-v${quest.revision}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'landing-page'}-v${quest.revision}.html`;
+    const ok = triggerFileDownload(filename, htmlCode, 'text/html;charset=utf-8');
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    if (!viewingQuestId) {
+      openResultModal(quest, 'code');
+    }
+    setExportNotice(
+      ok && !inIframe
+        ? `✅ Đang tải file ${filename}`
+        : '⚠️ Khung preview sandbox có thể chặn tải file tự động — bạn hãy bấm "📋 Copy HTML" ở tab Mã nguồn hoặc tải bằng link "Lưu thủ công".'
+    );
   };
 
   return (
@@ -330,37 +353,42 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
 
                   {/* Action bar when completed */}
                   {quest.finalOutput && quest.status === 'completed' && (
-                    <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="pixel-btn pixel-btn-primary"
-                        onClick={() => openResultModal(quest)}
-                        style={{ flex: 1, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' }}
-                      >
-                        {questHtml ? <Eye size={12} /> : <FileText size={12} />}
-                        {questHtml ? 'Xem Web / Góp ý' : 'Xem / Góp ý sửa'}
-                      </button>
-                      {questHtml && (
+                    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="pixel-btn pixel-btn-primary"
+                          onClick={() => openResultModal(quest)}
+                          style={{ flex: 1, justifyContent: 'center', fontSize: '11px', padding: '6px 8px' }}
+                        >
+                          {questHtml ? <Eye size={12} /> : <FileText size={12} />}
+                          {questHtml ? 'Mở Web & Code' : 'Mở kết quả'}
+                        </button>
+                        {questHtml && (
+                          <button
+                            type="button"
+                            className="pixel-btn"
+                            onClick={() => openResultModal(quest, 'code')}
+                            title="Xem & copy mã nguồn HTML"
+                            style={{ fontSize: '11px', padding: '6px 8px' }}
+                          >
+                            <Code2 size={12} />
+                            Code
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="pixel-btn pixel-btn-gold"
-                          onClick={() => handleDownloadHtml(quest, questHtml)}
-                          title="Tải file HTML chạy ngay (.html)"
-                          style={{ fontSize: '11px', padding: '5px 8px' }}
+                          onClick={() =>
+                            questHtml ? handleDownloadHtml(quest, questHtml) : handleDownloadMd(quest)
+                          }
+                          title={questHtml ? 'Tải file HTML (.html)' : 'Tải báo cáo (.md)'}
+                          style={{ fontSize: '11px', padding: '6px 8px' }}
                         >
-                          <Globe size={12} />
-                          .html
+                          <Download size={12} />
+                          {questHtml ? '.html' : '.md'}
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className="pixel-btn"
-                        onClick={() => handleDownloadMd(quest)}
-                        title="Tải báo cáo (.md)"
-                        style={{ fontSize: '11px', padding: '5px 8px' }}
-                      >
-                        <Download size={12} />
-                      </button>
+                      </div>
                     </div>
                   )}
 
@@ -403,48 +431,6 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
                       ))}
                     </div>
                   )}
-
-                  {/* Inline Final Output Preview */}
-                  {quest.finalOutput && (
-                    <div style={{ marginTop: '10px', position: 'relative' }}>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(quest.id, quest.finalOutput || '')}
-                        style={{
-                          position: 'absolute',
-                          top: '6px',
-                          right: '6px',
-                          fontSize: '10px',
-                          padding: '3px 7px',
-                          background: '#1e293b',
-                          border: '1px solid #334155',
-                          borderRadius: '4px',
-                          color: '#cbd5e1',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {copiedId === quest.id ? 'Đã copy!' : 'Copy'}
-                      </button>
-                      <pre
-                        className="font-mono"
-                        style={{
-                          padding: '8px',
-                          paddingTop: '26px',
-                          background: '#0d1117',
-                          border: '1px solid #14532d',
-                          borderRadius: '6px',
-                          fontSize: '11px',
-                          color: '#86efac',
-                          whiteSpace: 'pre-wrap',
-                          lineHeight: 1.45,
-                          maxHeight: '180px',
-                          overflowY: 'auto',
-                        }}
-                      >
-                        {quest.finalOutput}
-                      </pre>
-                    </div>
-                  )}
                 </div>
               );
             })
@@ -458,19 +444,19 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.78)',
+            background: 'rgba(0, 0, 0, 0.8)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 70,
-            padding: '16px',
+            padding: '14px',
           }}
         >
           <div
             className="pixel-panel"
             style={{
-              width: 'min(760px, 95vw)',
-              maxHeight: '88vh',
+              width: 'min(920px, 96vw)',
+              maxHeight: '90vh',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -478,19 +464,20 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
           >
             <div
               style={{
-                padding: '14px 18px',
+                padding: '12px 18px',
                 borderBottom: '1px solid #303a4d',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 gap: '12px',
+                flexWrap: 'wrap',
               }}
             >
               <div>
                 <div className="font-pixel" style={{ fontSize: '11px', color: '#4ade80' }}>
-                  🏆 KẾT QUẢ QUEST HOÀN THÀNH
+                  🏆 KẾT QUẢ QUEST HOÀN THÀNH (v{viewingQuest.revision})
                 </div>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', marginTop: '4px' }}>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc', marginTop: '4px' }}>
                   {viewingQuest.title}
                 </div>
               </div>
@@ -528,6 +515,21 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {exportNotice && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(56, 189, 248, 0.12)',
+                    border: '1px solid rgba(56, 189, 248, 0.45)',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    color: '#bae6fd',
+                  }}
+                >
+                  {exportNotice}
+                </div>
+              )}
+
               {isSimulationMode && (
                 <div
                   style={{
@@ -545,7 +547,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
                   }}
                 >
                   <span>
-                    ⚡ Đang chạy <strong>Simulation Mode</strong> (dữ liệu mẫu giả lập). Cài API Key thật để AI tự viết code &amp; nội dung theo yêu cầu!
+                    ⚡ Đang chạy <strong>Simulation Mode</strong> (mẫu giả lập). Cài API Key thật để AI tự viết code &amp; nội dung theo yêu cầu!
                   </span>
                   {onOpenApiSettings && (
                     <button
@@ -565,45 +567,132 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
               )}
 
               {viewingHtml && (
-                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #303a4d', paddingBottom: '8px' }}>
-                  <button
-                    type="button"
-                    className={`pixel-btn ${modalTab === 'preview' ? 'pixel-btn-primary' : ''}`}
-                    style={{ fontSize: '12px', padding: '6px 12px' }}
-                    onClick={() => setModalTab('preview')}
-                  >
-                    <Eye size={13} />
-                    Xem trước Web (Live HTML)
-                  </button>
-                  <button
-                    type="button"
-                    className={`pixel-btn ${modalTab === 'report' ? 'pixel-btn-primary' : ''}`}
-                    style={{ fontSize: '12px', padding: '6px 12px' }}
-                    onClick={() => setModalTab('report')}
-                  >
-                    <FileText size={13} />
-                    Báo cáo &amp; Code chi tiết
-                  </button>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '8px',
+                    flexWrap: 'wrap',
+                    borderBottom: '1px solid #303a4d',
+                    paddingBottom: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={`pixel-btn ${modalTab === 'preview' ? 'pixel-btn-primary' : ''}`}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={() => setModalTab('preview')}
+                    >
+                      <Eye size={13} />
+                      Xem trước Web
+                    </button>
+                    <button
+                      type="button"
+                      className={`pixel-btn ${modalTab === 'code' ? 'pixel-btn-primary' : ''}`}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={() => setModalTab('code')}
+                    >
+                      <Code2 size={13} />
+                      Mã nguồn HTML
+                    </button>
+                    <button
+                      type="button"
+                      className={`pixel-btn ${modalTab === 'report' ? 'pixel-btn-primary' : ''}`}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={() => setModalTab('report')}
+                    >
+                      <FileText size={13} />
+                      Báo cáo Team
+                    </button>
+                  </div>
+
+                  {modalTab === 'preview' && (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        className={`pixel-btn ${previewDevice === 'desktop' ? 'pixel-btn-gold' : ''}`}
+                        style={{ fontSize: '11px', padding: '4px 9px' }}
+                        onClick={() => setPreviewDevice('desktop')}
+                      >
+                        <Monitor size={12} />
+                        Desktop
+                      </button>
+                      <button
+                        type="button"
+                        className={`pixel-btn ${previewDevice === 'mobile' ? 'pixel-btn-gold' : ''}`}
+                        style={{ fontSize: '11px', padding: '4px 9px' }}
+                        onClick={() => setPreviewDevice('mobile')}
+                      >
+                        <Smartphone size={12} />
+                        Mobile
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
               {viewingHtml && modalTab === 'preview' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                   <iframe
                     title={`HTML Preview - ${viewingQuest.title}`}
                     srcDoc={viewingHtml}
                     sandbox="allow-scripts"
                     style={{
-                      width: '100%',
-                      height: '380px',
+                      width: previewDevice === 'mobile' ? '390px' : '100%',
+                      maxWidth: '100%',
+                      height: '420px',
                       border: '1px solid #303a4d',
                       borderRadius: '8px',
                       background: '#ffffff',
+                      transition: 'width 0.2s ease',
                     }}
                   />
-                  <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                    💡 Bạn có thể bấm <strong>Tải .html</strong> ở góc trên để mở trực tiếp bằng trình duyệt hoặc chuyển sang tab <strong>Báo cáo &amp; Code chi tiết</strong> để xem mã nguồn.
+                </div>
+              ) : viewingHtml && modalTab === 'code' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                      File HTML hoàn chỉnh ({viewingHtml.length.toLocaleString()} ký tự) — có thể copy dán thành file <code>index.html</code>:
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <a
+                        href={`data:text/html;charset=utf-8,${encodeURIComponent(viewingHtml)}`}
+                        download={`${viewingQuest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'landing-page'}-v${viewingQuest.revision}.html`}
+                        style={{ fontSize: '11px', color: '#38bdf8', textDecoration: 'underline' }}
+                      >
+                        Lưu thủ công (Save Link As)
+                      </a>
+                      <button
+                        type="button"
+                        className="pixel-btn pixel-btn-primary"
+                        style={{ fontSize: '11px', padding: '5px 10px' }}
+                        onClick={() => handleCopy('code-tab', viewingHtml)}
+                      >
+                        <Copy size={12} />
+                        {copiedId === 'code-tab' ? 'Đã copy!' : 'Copy toàn bộ HTML'}
+                      </button>
+                    </div>
                   </div>
+                  <textarea
+                    readOnly
+                    value={viewingHtml}
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    className="font-mono"
+                    style={{
+                      width: '100%',
+                      height: '380px',
+                      padding: '12px',
+                      background: '#0d1117',
+                      border: '1px solid #303a4d',
+                      borderRadius: '8px',
+                      color: '#86efac',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                      resize: 'vertical',
+                    }}
+                  />
                 </div>
               ) : (
                 <>
@@ -624,7 +713,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
                         lineHeight: 1.55,
                       }}
                     >
-                      {viewingQuest.finalOutput}
+                      {viewingHtml ? stripHtmlCodeBlocks(viewingQuest.finalOutput) : viewingQuest.finalOutput}
                     </pre>
                   </div>
 
@@ -655,7 +744,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({
                               lineHeight: 1.5,
                             }}
                           >
-                            {sub.output || '(Không có đầu ra)'}
+                            {(viewingHtml ? stripHtmlCodeBlocks(sub.output) : sub.output) || '(Không có đầu ra)'}
                           </pre>
                         </div>
                       ))}

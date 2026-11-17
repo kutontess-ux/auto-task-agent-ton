@@ -207,3 +207,56 @@ export function extractHtmlFromQuest(quest: Quest): string | null {
 
   return null;
 }
+
+export function stripHtmlCodeBlocks(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .replace(/```html\s*[\s\S]*?```/gi, '[📄 File HTML đã được tách riêng sang tab "Xem trước Web" & "Mã nguồn HTML"]')
+    .replace(/(<!DOCTYPE\s+html[\s\S]*?<\/html>|<html[\s\S]*?<\/html>)/gi, '[📄 File HTML đã được tách riêng sang tab "Xem trước Web" & "Mã nguồn HTML"]')
+    .trim();
+}
+
+export function triggerFileDownload(filename: string, content: string, mimeType: string): boolean {
+  try {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function copyTextReliable(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fallback below
+  }
+
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
