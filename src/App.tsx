@@ -95,6 +95,8 @@ export const App: React.FC = () => {
       <main className="app-main" style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         <QuestPanel
           quests={snapshot.quests}
+          isSimulationMode={snapshot.llmConfig.provider === 'simulation'}
+          onOpenApiSettings={() => setShowApiModal(true)}
           onSubmitQuest={handleSubmitQuest}
           onReviseQuest={handleReviseQuest}
         />

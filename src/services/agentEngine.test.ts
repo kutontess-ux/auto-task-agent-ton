@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { extractHtmlFromQuest } from '../utils/htmlDeliverable';
 import { SimulationEngine } from './agentEngine';
 
 describe('SimulationEngine', () => {
@@ -65,5 +66,21 @@ describe('SimulationEngine', () => {
     expect(revised.revision).toBe(2);
     expect(revised.feedbackHistory).toEqual(['Thêm ví dụ curl cụ thể hơn']);
     expect(revised.finalOutput).toContain('Thêm ví dụ curl cụ thể hơn');
+  });
+
+  it('generates extractable HTML deliverable for landing page quests', () => {
+    const engine = new SimulationEngine();
+    const quest = engine.submitQuest('Tạo landing page mẫu html', 'Trang giới thiệu sản phẩm AI');
+
+    for (let i = 0; i < 125; i++) {
+      engine.tick(0.2);
+    }
+
+    const done = engine.getSnapshot().quests.find((q) => q.id === quest.id)!;
+    expect(done.status).toBe('completed');
+    const html = extractHtmlFromQuest(done);
+    expect(html).not.toBeNull();
+    expect(html).toContain('<!DOCTYPE html>');
+    expect(html).toContain('Tạo landing page mẫu html');
   });
 });

@@ -1,9 +1,25 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Clock, Copy, Download, FileText, RotateCcw, Send, Sparkles, X } from 'lucide-react';
+import {
+  CheckCircle2,
+  Clock,
+  Copy,
+  Download,
+  Eye,
+  FileText,
+  Globe,
+  KeyRound,
+  RotateCcw,
+  Send,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { Quest } from '../types/quest';
+import { extractHtmlFromQuest } from '../utils/htmlDeliverable';
 
 interface QuestPanelProps {
   quests: Quest[];
+  isSimulationMode?: boolean;
+  onOpenApiSettings?: () => void;
   onSubmitQuest: (title: string, description: string) => void;
   onReviseQuest: (questId: string, feedback: string) => void;
 }
@@ -48,15 +64,28 @@ function buildFullMarkdown(quest: Quest): string {
   return parts.join('\n\n');
 }
 
-export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, onReviseQuest }) => {
+export const QuestPanel: React.FC<QuestPanelProps> = ({
+  quests,
+  isSimulationMode = false,
+  onOpenApiSettings,
+  onSubmitQuest,
+  onReviseQuest,
+}) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [expandedQuestId, setExpandedQuestId] = useState<string | null>(null);
   const [viewingQuestId, setViewingQuestId] = useState<string | null>(null);
+  const [modalTab, setModalTab] = useState<'preview' | 'report'>('preview');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
 
   const viewingQuest = quests.find((q) => q.id === viewingQuestId) ?? null;
+  const viewingHtml = viewingQuest ? extractHtmlFromQuest(viewingQuest) : null;
+
+  const openResultModal = (quest: Quest) => {
+    setViewingQuestId(quest.id);
+    setModalTab(extractHtmlFromQuest(quest) ? 'preview' : 'report');
+  };
 
   const handleReviseSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,6 +116,16 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, o
     const a = document.createElement('a');
     a.href = url;
     a.download = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'quest-result'}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadHtml = (quest: Quest, htmlCode: string) => {
+    const blob = new Blob([htmlCode], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${quest.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-') || 'landing-page'}-v${quest.revision}.html`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -224,6 +263,7 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, o
                   : quest.status === 'completed'
                     ? 100
                     : 0;
+              const questHtml = quest.status === 'completed' ? extractHtmlFromQuest(quest) : null;
 
               return (
                 <div
@@ -290,21 +330,33 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, o
 
                   {/* Action bar when completed */}
                   {quest.finalOutput && quest.status === 'completed' && (
-                    <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+                    <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                       <button
                         type="button"
                         className="pixel-btn pixel-btn-primary"
-                        onClick={() => setViewingQuestId(quest.id)}
+                        onClick={() => openResultModal(quest)}
                         style={{ flex: 1, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' }}
                       >
-                        <FileText size={12} />
-                        Xem / Góp ý sửa
+                        {questHtml ? <Eye size={12} /> : <FileText size={12} />}
+                        {questHtml ? 'Xem Web / Góp ý' : 'Xem / Góp ý sửa'}
                       </button>
+                      {questHtml && (
+                        <button
+                          type="button"
+                          className="pixel-btn pixel-btn-gold"
+                          onClick={() => handleDownloadHtml(quest, questHtml)}
+                          title="Tải file HTML chạy ngay (.html)"
+                          style={{ fontSize: '11px', padding: '5px 8px' }}
+                        >
+                          <Globe size={12} />
+                          .html
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="pixel-btn"
                         onClick={() => handleDownloadMd(quest)}
-                        title="Tải kết quả (.md)"
+                        title="Tải báo cáo (.md)"
                         style={{ fontSize: '11px', padding: '5px 8px' }}
                       >
                         <Download size={12} />
@@ -442,14 +494,24 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, o
                   {viewingQuest.title}
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {viewingHtml && (
+                  <button
+                    type="button"
+                    className="pixel-btn pixel-btn-gold"
+                    onClick={() => handleDownloadHtml(viewingQuest, viewingHtml)}
+                  >
+                    <Globe size={13} />
+                    Tải .html
+                  </button>
+                )}
                 <button
                   type="button"
                   className="pixel-btn"
-                  onClick={() => handleCopy('modal', buildFullMarkdown(viewingQuest))}
+                  onClick={() => handleCopy('modal', viewingHtml || buildFullMarkdown(viewingQuest))}
                 >
                   <Copy size={13} />
-                  {copiedId === 'modal' ? 'Đã copy!' : 'Copy tất cả'}
+                  {copiedId === 'modal' ? 'Đã copy!' : viewingHtml ? 'Copy HTML' : 'Copy tất cả'}
                 </button>
                 <button type="button" className="pixel-btn pixel-btn-primary" onClick={() => handleDownloadMd(viewingQuest)}>
                   <Download size={13} />
@@ -465,61 +527,142 @@ export const QuestPanel: React.FC<QuestPanelProps> = ({ quests, onSubmitQuest, o
               </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>
-                  👑 Báo cáo tổng hợp từ Manager (v{viewingQuest.revision})
-                </div>
-                <pre
-                  className="font-mono"
+            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {isSimulationMode && (
+                <div
                   style={{
-                    padding: '12px',
-                    background: '#0d1117',
-                    border: '1px solid #14532d',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '10px',
+                    flexWrap: 'wrap',
+                    padding: '9px 12px',
+                    background: 'rgba(245, 158, 11, 0.12)',
+                    border: '1px solid rgba(245, 158, 11, 0.45)',
                     borderRadius: '8px',
                     fontSize: '12px',
-                    color: '#86efac',
-                    whiteSpace: 'pre-wrap',
-                    lineHeight: 1.55,
+                    color: '#fde68a',
                   }}
                 >
-                  {viewingQuest.finalOutput}
-                </pre>
-              </div>
-
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px' }}>
-                  📋 Sản phẩm chi tiết của từng Agent
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {viewingQuest.subtasks.map((sub, idx) => (
-                    <div
-                      key={sub.id}
-                      style={{
-                        background: '#0d1117',
-                        border: '1px solid #303a4d',
-                        borderRadius: '8px',
-                        padding: '10px 12px',
+                  <span>
+                    ⚡ Đang chạy <strong>Simulation Mode</strong> (dữ liệu mẫu giả lập). Cài API Key thật để AI tự viết code &amp; nội dung theo yêu cầu!
+                  </span>
+                  {onOpenApiSettings && (
+                    <button
+                      type="button"
+                      className="pixel-btn pixel-btn-gold"
+                      style={{ fontSize: '11px', padding: '4px 10px' }}
+                      onClick={() => {
+                        setViewingQuestId(null);
+                        onOpenApiSettings();
                       }}
                     >
-                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#e2e8f0', marginBottom: '4px' }}>
-                        {idx + 1}. {sub.assignedAgentName} ({sub.assignedRoleLabel}) — {sub.title}
-                      </div>
-                      <pre
-                        className="font-mono"
-                        style={{
-                          fontSize: '11.5px',
-                          color: '#cbd5e1',
-                          whiteSpace: 'pre-wrap',
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {sub.output || '(Không có đầu ra)'}
-                      </pre>
-                    </div>
-                  ))}
+                      <KeyRound size={12} />
+                      Cài API Key
+                    </button>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {viewingHtml && (
+                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #303a4d', paddingBottom: '8px' }}>
+                  <button
+                    type="button"
+                    className={`pixel-btn ${modalTab === 'preview' ? 'pixel-btn-primary' : ''}`}
+                    style={{ fontSize: '12px', padding: '6px 12px' }}
+                    onClick={() => setModalTab('preview')}
+                  >
+                    <Eye size={13} />
+                    Xem trước Web (Live HTML)
+                  </button>
+                  <button
+                    type="button"
+                    className={`pixel-btn ${modalTab === 'report' ? 'pixel-btn-primary' : ''}`}
+                    style={{ fontSize: '12px', padding: '6px 12px' }}
+                    onClick={() => setModalTab('report')}
+                  >
+                    <FileText size={13} />
+                    Báo cáo &amp; Code chi tiết
+                  </button>
+                </div>
+              )}
+
+              {viewingHtml && modalTab === 'preview' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <iframe
+                    title={`HTML Preview - ${viewingQuest.title}`}
+                    srcDoc={viewingHtml}
+                    sandbox="allow-scripts"
+                    style={{
+                      width: '100%',
+                      height: '380px',
+                      border: '1px solid #303a4d',
+                      borderRadius: '8px',
+                      background: '#ffffff',
+                    }}
+                  />
+                  <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                    💡 Bạn có thể bấm <strong>Tải .html</strong> ở góc trên để mở trực tiếp bằng trình duyệt hoặc chuyển sang tab <strong>Báo cáo &amp; Code chi tiết</strong> để xem mã nguồn.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>
+                      👑 Báo cáo tổng hợp từ Manager (v{viewingQuest.revision})
+                    </div>
+                    <pre
+                      className="font-mono"
+                      style={{
+                        padding: '12px',
+                        background: '#0d1117',
+                        border: '1px solid #14532d',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        color: '#86efac',
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {viewingQuest.finalOutput}
+                    </pre>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', marginBottom: '8px' }}>
+                      📋 Sản phẩm chi tiết của từng Agent
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {viewingQuest.subtasks.map((sub, idx) => (
+                        <div
+                          key={sub.id}
+                          style={{
+                            background: '#0d1117',
+                            border: '1px solid #303a4d',
+                            borderRadius: '8px',
+                            padding: '10px 12px',
+                          }}
+                        >
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#e2e8f0', marginBottom: '4px' }}>
+                            {idx + 1}. {sub.assignedAgentName} ({sub.assignedRoleLabel}) — {sub.title}
+                          </div>
+                          <pre
+                            className="font-mono"
+                            style={{
+                              fontSize: '11.5px',
+                              color: '#cbd5e1',
+                              whiteSpace: 'pre-wrap',
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {sub.output || '(Không có đầu ra)'}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Feedback / Revision Bar */}

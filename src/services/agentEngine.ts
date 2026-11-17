@@ -8,6 +8,7 @@ import {
 import { Agent, AgentRole, HireAgentInput, LogEntry } from '../types/agent';
 import { DEFAULT_LLM_CONFIG, LLMConfig } from '../types/llm';
 import { Quest, Subtask } from '../types/quest';
+import { buildSimulatedHtmlTemplate, isWebDeliverableQuest } from '../utils/htmlDeliverable';
 import { callLLM, parseJsonFromLLM } from './llmClient';
 
 export interface EngineSnapshot {
@@ -498,7 +499,13 @@ export class SimulationEngine implements IAgentEngine {
           }". Hãy cải thiện triệt để theo góp ý này.`
         : '';
 
-    const systemPrompt = `Bạn là ${worker.name}, giữ vai trò ${worker.roleLabel}. Chuyên môn: ${worker.specialty}. Hãy thực hiện phần việc được giao một cách chuyên nghiệp, súc tích và hữu ích bằng tiếng Việt.`;
+    const isWebQuest = isWebDeliverableQuest(quest.title, quest.description);
+    const codeRule =
+      isWebQuest && (worker.role === 'coder' || worker.role === 'custom')
+        ? '\nQUAN TRỌNG: Đây là nhiệm vụ tạo web/HTML. Hãy viết CODE HTML+CSS+JS HOÀN CHỈNH tự chạy trong 1 file duy nhất (bắt đầu bằng <!DOCTYPE html> đến </html>) đặt trong block ```html ... ```. Không chỉ viết mô tả chung chung.'
+        : '';
+
+    const systemPrompt = `Bạn là ${worker.name}, giữ vai trò ${worker.roleLabel}. Chuyên môn: ${worker.specialty}. Hãy thực hiện phần việc được giao một cách chuyên nghiệp, cụ thể và hữu ích bằng tiếng Việt.${codeRule}`;
     const userPrompt = `Quest tổng thể: "${quest.title}"\nMô tả Quest: ${quest.description}${feedbackCtx}\n\nNhiệm vụ riêng của bạn: ${sub.title}`;
 
     try {
@@ -543,8 +550,12 @@ export class SimulationEngine implements IAgentEngine {
           }"`
         : '';
 
-    const systemPrompt =
-      'Bạn là Manager tổng hợp báo cáo từ các AI Agent chuyên môn. Hãy tổng hợp các phần việc thành một kết quả hoàn chỉnh, mạch lạc, rõ ràng bằng tiếng Việt.';
+    const isWebQuest = isWebDeliverableQuest(quest.title, quest.description);
+    const webSynthesisRule = isWebQuest
+      ? ' ĐẶC BIỆT: Vì người dùng yêu cầu tạo web/HTML/landing page, BẮT BUỘC phải xuất toàn bộ file HTML hoàn chỉnh (từ <!DOCTYPE html> đến </html>, gộp nội dung/copywriting và thiết kế tốt nhất từ team) nằm trong block ```html ... ``` ở đầu báo cáo để người dùng có thể xem trước và tải file .html trực tiếp.'
+      : '';
+
+    const systemPrompt = `Bạn là Manager tổng hợp báo cáo từ các AI Agent chuyên môn. Hãy tổng hợp các phần việc thành một sản phẩm hoàn chỉnh, thực tế và sẵn sàng sử dụng bằng tiếng Việt.${webSynthesisRule}`;
     const userPrompt = `Quest: "${quest.title}"\nMô tả: ${quest.description}${feedbackNote}\n\nBáo cáo từ team:\n${reports}`;
 
     try {
@@ -736,7 +747,12 @@ export class SimulationEngine implements IAgentEngine {
                 if (timerInfo.elapsed >= timerInfo.duration) {
                   sub.status = 'completed';
                   sub.progress = 100;
-                  sub.output = `Hoàn thành "${sub.title}" bởi ${worker.name} (${worker.roleLabel}).`;
+                  if (worker.role === 'coder' && isWebDeliverableQuest(quest.title, quest.description)) {
+                    const htmlCode = buildSimulatedHtmlTemplate(quest);
+                    sub.output = `Đã tạo mã nguồn HTML/CSS hoàn chỉnh cho "${quest.title}":\n\n\`\`\`html\n${htmlCode}\n\`\`\``;
+                  } else {
+                    sub.output = `Hoàn thành "${sub.title}" bởi ${worker.name} (${worker.roleLabel}).`;
+                  }
                   worker.currentSubtaskId = null;
                   worker.status = 'reporting';
                   const meetPt = MEETING_POINTS[Math.floor(Math.random() * MEETING_POINTS.length)];
@@ -777,15 +793,23 @@ export class SimulationEngine implements IAgentEngine {
                     quest.feedbackHistory[quest.feedbackHistory.length - 1]
                   }")`
                 : 'Phiên bản: v1';
+            const isWebQuest = isWebDeliverableQuest(quest.title, quest.description);
+            const htmlSection = isWebQuest
+              ? `\n\n\`\`\`html\n${buildSimulatedHtmlTemplate(quest)}\n\`\`\`\n`
+              : '';
             quest.finalOutput = [
               `✅ KẾT QUẢ TỔNG HỢP QUEST: "${quest.title}"`,
               `Quản lý điều phối: ${manager.name} (Lv.${manager.level}) · ${revLine}`,
+              `⚠️ Chế độ Simulation (mẫu dựng sẵn — cài API Key thật để AI tự thiết kế chi tiết theo yêu cầu).`,
               `----------------------------------------`,
               ...quest.subtasks.map(
-                (s, i) => `${i + 1}. [${s.assignedRoleLabel} - ${s.assignedAgentName}]: ${s.output}`
+                (s, i) =>
+                  `${i + 1}. [${s.assignedRoleLabel} - ${s.assignedAgentName}]: ${
+                    s.output && s.output.includes('```html') ? 'Đã hoàn tất file HTML mẫu bên dưới.' : s.output
+                  }`
               ),
               `----------------------------------------`,
-              `Tất cả đầu mục đã được kiểm duyệt và sẵn sàng bàn giao!`,
+              htmlSection || `Tất cả đầu mục đã được kiểm duyệt và sẵn sàng bàn giao!`,
             ].join('\n');
             readyToComplete = true;
           }
